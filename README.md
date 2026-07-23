@@ -2,6 +2,7 @@
 
 MCP server that reads **OpenAPI contracts** from local (or remote) backends so agents can build frontends and mobile apps against the real API shape. This release is **read-only**: it inspects the OpenAPI document and never executes HTTP calls against your API. Backends are registered on demand; there is no env list of backends.
 
+[![npm](https://img.shields.io/npm/v/@fqueis/openapi-contract.svg)](https://www.npmjs.com/package/@fqueis/openapi-contract)
 [![PR Checks](https://github.com/fqueis/openapi-contract/actions/workflows/pr-checks.yml/badge.svg)](https://github.com/fqueis/openapi-contract/actions/workflows/pr-checks.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
 
@@ -23,12 +24,34 @@ Built with [`@modelcontextprotocol/sdk`](https://www.npmjs.com/package/@modelcon
 ## Requirements
 
 - Node.js >= 18
-- [pnpm](https://pnpm.io/)
 - A backend that exposes OpenAPI (Nest Swagger: `/docs-json`, etc.)
+- [pnpm](https://pnpm.io/) — only if you develop or contribute to this repo
 
 ---
 
-## Setup
+## Usage in Cursor (`mcp.json`)
+
+Add to your Cursor MCP config (`~/.cursor/mcp.json` or Cursor Settings → MCP).
+
+**Recommended (npm):**
+
+```json
+{
+  "mcpServers": {
+    "openapi-contract": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@fqueis/openapi-contract"]
+    }
+  }
+}
+```
+
+You can run the server from a local clone for development, but for normal use prefer the published package above.
+
+---
+
+## Local development / contributors
 
 ```bash
 cd /path/to/openapi-contract
@@ -37,13 +60,7 @@ pnpm build
 pnpm test
 ```
 
----
-
-## Usage in Cursor (`mcp.json`)
-
-Add to your Cursor MCP config (`~/.cursor/mcp.json` or Cursor Settings → MCP).
-
-**Recommended (built JS):**
+**Built JS:**
 
 ```json
 {
