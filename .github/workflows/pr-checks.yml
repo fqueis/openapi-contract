@@ -1,6 +1,7 @@
 # Quality gate for changes targeting main.
 #
-# Runs lint, build, and tests on pull_request events only.
+# Runs lint, build, and tests with coverage on pull_request events only.
+# Coverage floors come from vitest.config.ts.
 # Intentionally does not run on push to main: that would re-execute the same
 # suite after every merge. Post-merge soft detection of direct pushes lives in
 # main-direct-push-alert.yml (alert only; not a substitute for branch protection).
@@ -62,5 +63,5 @@ jobs:
       - name: Install dependencies
         run: pnpm install --ignore-scripts --frozen-lockfile
 
-      - name: Test
-        run: pnpm test
+      - name: Test with coverage
+        run: pnpm test:coverage
