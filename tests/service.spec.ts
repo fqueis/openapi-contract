@@ -10,6 +10,9 @@
  * 6. refresh / forget / clear lifecycle
  * 7. listTags, getSecurity, listOperations, searchOperations
  * 8. Agent-facing errors for missing backend / operation
+ * 9. Sparse OpenAPI documents use empty overview fallbacks
+ * 10. getOperation tolerates responses without content and non-object entries
+ * 11. getSchema reports unresolvable null component schemas via $ref
  *
  * Out of scope: BackendRegistry TTL edge cases (see registry.spec), pure OpenAPI
  * transforms (see openapi-core.spec), MCP tool registration wrappers (see tools.spec).
@@ -250,6 +253,92 @@ describe('OpenApiContractService', () => {
 
     await expect(service.getOperation('demo', { operationId: 'nope' })).rejects.toThrow(/Operation not found/);
     await expect(service.getSecurity('demo', { operationId: 'nope' })).rejects.toThrow(/list_operations/);
+  });
+
+  it('fills overview fields with empty fallbacks when the document is sparse', async () => {
+    const sparse = {
+      openapi: '3.0.0',
+      paths: {},
+    };
+    const { service } = await setup({ document: sparse });
+    await service.useBackend({ baseUrl: 'http://localhost:3000', id: 'sparse' });
+
+    const overview = await service.getApiOverview('sparse');
+
+    expect(overview).toMatchObject({
+      info: {},
+      openapi: '3.0.0',
+      servers: [],
+      tagCount: 0,
+      operationCount: 0,
+      schemaCount: 0,
+      security: [],
+      securitySchemes: {},
+    });
+  });
+
+  it('lists tags when the document omits the tags array entirely', async () => {
+    const untitled = {
+      openapi: '3.0.0',
+      paths: {
+        '/ping': {
+          get: {
+            operationId: 'ping',
+            tags: ['ops'],
+            responses: { '200': { description: 'OK' } },
+          },
+        },
+      },
+    };
+    const { service } = await setup({ document: untitled });
+    await service.useBackend({ baseUrl: 'http://localhost:3000', id: 'ping' });
+
+    expect(await service.listTags('ping')).toEqual([{ name: 'ops', description: undefined }]);
+  });
+
+  it('keeps non-object response entries and omits content when absent', async () => {
+    const doc = {
+      openapi: '3.0.0',
+      paths: {
+        '/v1/ping': {
+          get: {
+            operationId: 'ping',
+            responses: {
+              '204': { description: 'No Content' },
+              default: 'unexpected',
+            },
+          },
+        },
+      },
+    };
+    const { service } = await setup({ document: doc });
+    await service.useBackend({ baseUrl: 'http://localhost:3000', id: 'ping' });
+
+    const operation = await service.getOperation('ping', { operationId: 'ping' });
+
+    expect(operation.responses['204']).toEqual({
+      description: 'No Content',
+      content: undefined,
+    });
+    expect(operation.responses.default).toBe('unexpected');
+  });
+
+  it('throws when a $ref resolves to a null component schema', async () => {
+    const doc = {
+      openapi: '3.0.0',
+      paths: {},
+      components: {
+        schemas: {
+          NullSchema: null,
+        },
+      },
+    };
+    const { service } = await setup({ document: doc });
+    await service.useBackend({ baseUrl: 'http://localhost:3000', id: 'nulls' });
+
+    await expect(service.getSchema('nulls', '#/components/schemas/NullSchema')).rejects.toThrow(
+      /Could not resolve schema/,
+    );
   });
 
   /**

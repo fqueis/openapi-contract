@@ -1,12 +1,15 @@
 /**
- * Application service that orchestrates registry, OpenAPI fetch/cache, and
- * contract queries for MCP tools.
+ * Application service that orchestrates registry, OpenAPI fetch/cache, contract
+ * queries, and optional call_endpoint HTTP execution for MCP tools.
  *
  * Does not own transport or tool registration; tools call into this seam.
+ * Does not persist secrets or validate request bodies against OpenAPI schemas.
  */
 
 import type { AppConfig } from '@/config.js';
 import { SpecCache } from '@openapi/cache.js';
+import { materializeCallResult, mergeCallHeaders, serializeCallBody, type CallEndpointResult } from '@openapi/call.js';
+import { buildCallUrl } from '@openapi/call-url.js';
 import { dereferenceSchema } from '@openapi/deref.js';
 import { buildRequestExample } from '@openapi/example.js';
 import { fetchOpenApiDocument } from '@openapi/fetch.js';
@@ -34,7 +37,31 @@ export function missingBackendMessage(backendId: string): string {
 }
 
 /**
- * Orchestrates backend registry + OpenAPI contract reads for MCP tools.
+ * Input for {@link OpenApiContractService.callEndpoint}.
+ */
+export type CallEndpointInput = {
+  /** Registered backend id. */
+  backendId: string;
+  /** HTTP method when selecting by method+path. */
+  method?: string;
+  /** OpenAPI path template when selecting by method+path. */
+  path?: string;
+  /** OpenAPI operationId when selecting by id. */
+  operationId?: string;
+  /** Values for `{name}` path template segments. */
+  pathParams?: Record<string, string>;
+  /** Query string parameters. */
+  query?: Record<string, string>;
+  /** JSON object or raw string body. */
+  body?: unknown;
+  /** Literal request headers. */
+  headers?: Record<string, string>;
+  /** Header name → process.env key (wins over `headers` on conflict). */
+  headerEnv?: Record<string, string>;
+};
+
+/**
+ * Orchestrates backend registry, OpenAPI contract reads, and optional HTTP calls.
  */
 export class OpenApiContractService {
   readonly registry: BackendRegistry;
@@ -297,6 +324,68 @@ export class OpenApiContractService {
   }
 
   /**
+   * Executes an HTTP request against a registered backend operation.
+   *
+   * Resolves the operation from the OpenAPI document, builds the URL from
+   * `baseUrl` plus an optional relative/same-origin `servers[0]` prefix, merges
+   * auth headers, and returns status/body even for HTTP 4xx/5xx. Transport
+   * failures (timeout, missing path param, missing headerEnv) throw.
+   *
+   * @param input - Backend, operation selector, params, body, and auth
+   * @returns Normalized HTTP result for the agent
+   */
+  async callEndpoint(input: CallEndpointInput): Promise<CallEndpointResult> {
+    const backend = await this.requireBackend(input.backendId);
+    const { document } = await this.getDocument(input.backendId);
+    const indexed = findOperation(indexOperations(input.backendId, document), {
+      method: input.method,
+      path: input.path,
+      operationId: input.operationId,
+    });
+    if (!indexed) {
+      throw new Error(operationNotFoundMessage(input));
+    }
+
+    const url = buildCallUrl({
+      baseUrl: backend.baseUrl,
+      servers: document.servers ?? [],
+      pathTemplate: indexed.path,
+      pathParams: input.pathParams,
+      query: input.query,
+    });
+
+    const headers = mergeCallHeaders(input.headers, input.headerEnv);
+    const serialized = serializeCallBody(input.body);
+    if (serialized.defaultJson && !hasHeaderIgnoreCase(headers, 'content-type')) {
+      headers['Content-Type'] = 'application/json';
+    }
+
+    const method = indexed.method;
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        method,
+        headers,
+        body: serialized.body,
+        signal: AbortSignal.timeout(this.config.callTimeoutMs),
+      });
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw new Error(`call_endpoint timed out after ${this.config.callTimeoutMs}ms for ${method} ${url}.`, {
+          cause: error,
+        });
+      }
+      throw error;
+    }
+
+    return materializeCallResult(response, {
+      url,
+      method,
+      maxBodyBytes: this.config.callMaxBodyBytes,
+    });
+  }
+
+  /**
    * Returns a dereferenced component schema by name or `#/…` ref.
    *
    * @param backendId - Backend id
@@ -432,4 +521,30 @@ function mapContentSchemas(
     };
   }
   return out;
+}
+
+/**
+ * Checks whether a header name exists in a record (case-insensitive).
+ *
+ * @param headers - Header map
+ * @param name - Header name to find
+ * @returns True when present
+ */
+function hasHeaderIgnoreCase(headers: Record<string, string>, name: string): boolean {
+  const target = name.toLowerCase();
+  return Object.keys(headers).some((key) => key.toLowerCase() === target);
+}
+
+/**
+ * Detects AbortSignal timeout / abort errors across runtimes.
+ *
+ * @param error - Caught value
+ * @returns True when the failure is an abort/timeout
+ */
+function isAbortError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+  const name = (error as { name?: string }).name;
+  return name === 'TimeoutError' || name === 'AbortError';
 }

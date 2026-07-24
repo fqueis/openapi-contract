@@ -4,6 +4,8 @@
  *
  * Starts an MCP server that exposes OpenAPI contract tools for agents building
  * frontends and mobile apps. Backends are registered on demand via use_backend.
+ * HTTP execution (`call_endpoint`) is registered only when
+ * OPENAPI_MCP_ENABLE_CALLS is truthy.
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -12,6 +14,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { loadConfig } from '@/config.js';
 import { OpenApiContractService } from '@/service.js';
 import { registerBackendTools } from '@tools/backends.js';
+import { registerCallToolsIfEnabled } from '@tools/call.js';
 import { registerOperationTools } from '@tools/operations.js';
 import { registerOverviewTools } from '@tools/overview.js';
 import { registerSchemaTools } from '@tools/schemas.js';
@@ -36,6 +39,7 @@ async function main(): Promise<void> {
   registerSecurityTools(server, service);
   registerOperationTools(server, service);
   registerSchemaTools(server, service);
+  registerCallToolsIfEnabled(server, service, config.enableCalls);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

@@ -1,6 +1,6 @@
 # OpenAPI Contract MCP
 
-MCP server that reads **OpenAPI contracts** from local (or remote) backends so agents can build frontends and mobile apps against the real API shape. This release is **read-only**: it inspects the OpenAPI document and never executes HTTP calls against your API. Backends are registered on demand; there is no env list of backends.
+MCP server that reads **OpenAPI contracts** from local (or remote) backends so agents can build frontends and mobile apps against the real API shape. By default it is **read-only** (inspects the OpenAPI document only). Optional HTTP execution via `call_endpoint` is available when you set `OPENAPI_MCP_ENABLE_CALLS`. Backends are registered on demand; there is no env list of backends.
 
 [![npm](https://img.shields.io/npm/v/@fqueis/openapi-contract.svg)](https://www.npmjs.com/package/@fqueis/openapi-contract)
 [![PR Checks](https://github.com/fqueis/openapi-contract/actions/workflows/pr-checks.yml/badge.svg)](https://github.com/fqueis/openapi-contract/actions/workflows/pr-checks.yml)
@@ -17,7 +17,7 @@ Built with [`@modelcontextprotocol/sdk`](https://www.npmjs.com/package/@modelcon
 - **On-demand backend registration**: call `use_backend` with a `baseUrl`; nothing sensitive needs to live in a static backend list
 - **Contract browsing**: overview, tags, operations, security schemes, and component schemas from the live spec
 - **Dereferenced operations**: `get_operation` returns local `$ref` resolution plus a request example when possible
-- **Read-only**: the server never executes API calls; it only reads and explains the OpenAPI shape
+- **Read-only by default**: API execution is off unless `OPENAPI_MCP_ENABLE_CALLS` is set (then `call_endpoint` is registered)
 
 ---
 
@@ -29,9 +29,9 @@ Built with [`@modelcontextprotocol/sdk`](https://www.npmjs.com/package/@modelcon
 
 ---
 
-## Usage in Cursor (`mcp.json`)
+## Usage with an MCP client
 
-Add to your Cursor MCP config (`~/.cursor/mcp.json` or Cursor Settings → MCP).
+Register the server in your MCP client's config (stdio). Shape varies slightly by client; the examples below use a common `mcpServers` layout.
 
 **Recommended (npm):**
 
@@ -48,6 +48,25 @@ Add to your Cursor MCP config (`~/.cursor/mcp.json` or Cursor Settings → MCP).
 ```
 
 You can run the server from a local clone for development, but for normal use prefer the published package above.
+
+**Optional: enable HTTP calls** (registers `call_endpoint`):
+
+```json
+{
+  "mcpServers": {
+    "openapi-contract": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@fqueis/openapi-contract"],
+      "env": {
+        "OPENAPI_MCP_ENABLE_CALLS": "1"
+      }
+    }
+  }
+}
+```
+
+Prefer `headerEnv` (env var names) over pasting secrets into `headers` so tokens are less likely to appear in agent transcripts.
 
 ---
 
@@ -96,9 +115,10 @@ pnpm test
 2. `get_api_overview` / `list_tags` / `list_operations` / `search_operations`
 3. `get_operation` for dereferenced schemas + request example
 4. `get_schema` / `get_security` as needed
-5. `forget_backend` or `clear_backends` to drop the on-disk registry; `refresh_backend` to refetch OpenAPI
+5. With `OPENAPI_MCP_ENABLE_CALLS=1`: `call_endpoint` to execute an operation (auth via `headers` / `headerEnv`)
+6. `forget_backend` or `clear_backends` to drop the on-disk registry; `refresh_backend` to refetch OpenAPI
 
-If `baseUrl` is missing, tools return a clear error so the agent can ask you in the chat.
+If `baseUrl` is missing, tools return a clear error so the agent can ask the user.
 
 ---
 
@@ -118,6 +138,7 @@ If `baseUrl` is missing, tools return a clear error so the agent can ask you in 
 | `search_operations` | Free-text search                                           |
 | `get_operation`     | Full operation (dereferenced + example)                    |
 | `get_schema`        | Component schema by name or `$ref`                         |
+| `call_endpoint`     | Execute HTTP against an operation (only if ENABLE_CALLS)   |
 
 ---
 
@@ -129,11 +150,16 @@ Default path: `/docs-json`. Fallbacks: `/docs-yaml` → `/openapi.json` → `/v3
 
 ## Optional env
 
-| Variable                      | Default                                             | Meaning                              |
-| ----------------------------- | --------------------------------------------------- | ------------------------------------ |
-| `OPENAPI_MCP_CACHE_TTL_MS`    | `60000`                                             | In-memory OpenAPI document TTL       |
-| `OPENAPI_MCP_REGISTRY_TTL_MS` | `86400000`                                          | On-disk backend registry TTL (1 day) |
-| `OPENAPI_MCP_REGISTRY_PATH`   | `%USERPROFILE%\.openapi-contract-mcp\backends.json` | Registry file path                   |
+MCP client configs (`mcp.json` and equivalents) pass `env` into the server process. Those values are always **strings** (same as OS/`process.env`). Write `"1"` or `"30000"`, not bare JSON booleans or numbers.
+
+| Variable                          | Default                                             | Meaning                                                              |
+| --------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------- |
+| `OPENAPI_MCP_CACHE_TTL_MS`        | `60000`                                             | In-memory OpenAPI document TTL                                       |
+| `OPENAPI_MCP_REGISTRY_TTL_MS`     | `86400000`                                          | On-disk backend registry TTL (1 day)                                 |
+| `OPENAPI_MCP_REGISTRY_PATH`       | `%USERPROFILE%\.openapi-contract-mcp\backends.json` | Registry file path                                                   |
+| `OPENAPI_MCP_ENABLE_CALLS`        | unset (off)                                         | When `"1"` / `"true"` / `"yes"`, register `call_endpoint`            |
+| `OPENAPI_MCP_CALL_TIMEOUT_MS`     | `30000`                                             | Abort timeout for `call_endpoint` requests                           |
+| `OPENAPI_MCP_CALL_MAX_BODY_BYTES` | `102400`                                            | Max response body bytes returned by `call_endpoint` (then truncated) |
 
 ---
 
