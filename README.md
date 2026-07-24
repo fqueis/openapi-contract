@@ -167,6 +167,8 @@ MCP client configs (`mcp.json` and equivalents) pass `env` into the server proce
 
 For the communication flow between the MCP client, the service layer, the registry/cache, and the OpenAPI backend (including Mermaid diagrams), see [ARCHITECT.md](ARCHITECT.md).
 
+Release history lives in [CHANGELOG.md](CHANGELOG.md). GitHub Release notes are taken from the matching version section when present.
+
 ---
 
 ## License
