@@ -1,0 +1,132 @@
+# Publish @fqueis/openapi-contract to npm when a new version lands on main.
+#
+# Auth: npm Trusted Publishing (OIDC). Requires id-token: write,
+# Node >= 22.14, npm CLI >= 11.5.1, and a Trusted Publisher on npmjs.com pointing
+# at this workflow file (publish.yml) for repo fqueis/openapi-contract.
+#
+# Gate: skip if package.json version is already on the registry.
+# Otherwise: lint + test + build, create GitHub Release (notes since previous tag),
+# then pnpm publish. workflow_dispatch retries a failed publish without a new bump.
+#
+# Bootstrap: the first package version must exist on npm (local publish + 2FA) before
+# Trusted Publisher can be configured; after that, CI owns subsequent publishes.
+name: Publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: publish-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22.14'
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Ensure npm CLI supports trusted publishing
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: pnpm install --ignore-scripts --frozen-lockfile
+
+      - name: Resolve version and check npm
+        id: version
+        run: |
+          VERSION="$(node -p "JSON.parse(require('fs').readFileSync('package.json','utf8')).version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Package version: $VERSION"
+
+          if npm view "@fqueis/openapi-contract@$VERSION" version >/dev/null 2>&1; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "Version $VERSION is already on npm — skipping publish."
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+            echo "Version $VERSION is not on npm — will publish."
+          fi
+
+      - name: Lint
+        if: steps.version.outputs.already_published == 'false'
+        run: pnpm lint
+
+      - name: Test
+        if: steps.version.outputs.already_published == 'false'
+        run: pnpm test
+
+      - name: Build
+        if: steps.version.outputs.already_published == 'false'
+        run: pnpm build
+
+      - name: Create GitHub Release
+        if: steps.version.outputs.already_published == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — skipping create."
+            exit 0
+          fi
+
+          PREV_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          NOTES_FILE="$(mktemp)"
+
+          if [ -z "$PREV_TAG" ]; then
+            {
+              echo "## ${TAG}"
+              echo
+              echo "Initial release of \`@fqueis/openapi-contract\`."
+            } > "$NOTES_FILE"
+          else
+            {
+              echo "## ${TAG}"
+              echo
+              echo "Changes since ${PREV_TAG}:"
+              echo
+              git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges
+              echo
+            } > "$NOTES_FILE"
+
+            if ! grep -q '^- ' "$NOTES_FILE"; then
+              {
+                echo "## ${TAG}"
+                echo
+                echo "Changes since ${PREV_TAG}:"
+                echo
+                echo "- No non-merge commits since ${PREV_TAG}."
+              } > "$NOTES_FILE"
+            fi
+          fi
+
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file "$NOTES_FILE" \
+            --target "${{ github.sha }}"
+
+      - name: Publish to npm
+        if: steps.version.outputs.already_published == 'false'
+        run: pnpm publish --access public --no-git-checks

@@ -1,5 +1,5 @@
 {
-  "name": "openapi-contract",
+  "name": "@fqueis/openapi-contract",
   "version": "1.0.0",
   "description": "MCP server that reads OpenAPI contracts from local backends for frontend/mobile agents",
   "type": "module",
@@ -18,15 +18,27 @@
     "lint:fix": "eslint \"{src,tests}/**/*.ts\" --fix",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "prepublishOnly": "pnpm run build"
   },
   "keywords": [
     "mcp",
     "openapi",
     "swagger"
   ],
-  "author": "",
+  "author": "fqueis",
   "license": "MIT",
+  "homepage": "https://github.com/fqueis/openapi-contract#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fqueis/openapi-contract.git"
+  },
+  "bugs": {
+    "url": "https://github.com/fqueis/openapi-contract/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "packageManager": "pnpm@10.33.2",
   "engines": {
     "node": ">=18"
