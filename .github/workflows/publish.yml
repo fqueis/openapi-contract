@@ -5,8 +5,11 @@
 # at this workflow file (publish.yml) for repo fqueis/openapi-contract.
 #
 # Gate: skip if package.json version is already on the registry.
-# Otherwise: lint + test + build, create GitHub Release (notes since previous tag),
-# then pnpm publish. workflow_dispatch retries a failed publish without a new bump.
+# Otherwise: lint + test + build, create GitHub Release, then pnpm publish.
+# Release notes prefer the matching ## [version] section from CHANGELOG.md;
+# otherwise fall back to gh --generate-notes from the previous v* tag (or an
+# initial-release stub when no prior tag exists).
+# workflow_dispatch retries a failed publish without a new bump.
 #
 # Bootstrap: the first package version must exist on npm (local publish + 2FA) before
 # Trusted Publisher can be configured; after that, CI owns subsequent publishes.
@@ -92,40 +95,60 @@ jobs:
             exit 0
           fi
 
-          PREV_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
           NOTES_FILE="$(mktemp)"
+          PREV_TAG="$(git tag -l 'v*' --sort=-v:refname | grep -vxF "$TAG" | head -n1 || true)"
 
-          if [ -z "$PREV_TAG" ]; then
+          extract_changelog_section() {
+            local ver="$1"
+            local out="$2"
+            if [ ! -f CHANGELOG.md ]; then
+              return 1
+            fi
+            awk -v ver="$ver" '
+              BEGIN {
+                ver_re = ver
+                gsub(/\./, "\\.", ver_re)
+              }
+              $0 ~ ("^## \\[" ver_re "\\]( |$)") {
+                found = 1
+                print
+                next
+              }
+              found && /^## / { exit }
+              found { print }
+            ' CHANGELOG.md > "$out"
+            # Require at least the heading line
+            if [ ! -s "$out" ] || ! grep -qF "## [${ver}]" "$out"; then
+              return 1
+            fi
+            return 0
+          }
+
+          if extract_changelog_section "$VERSION" "$NOTES_FILE"; then
+            echo "Using CHANGELOG.md section for ${VERSION}."
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file "$NOTES_FILE" \
+              --target "${{ github.sha }}"
+          elif [ -n "$PREV_TAG" ]; then
+            echo "No CHANGELOG section for ${VERSION}; generating notes since ${PREV_TAG}."
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --generate-notes \
+              --notes-start-tag "$PREV_TAG" \
+              --target "${{ github.sha }}"
+          else
+            echo "No CHANGELOG section and no previous v* tag; writing initial stub."
             {
               echo "## ${TAG}"
               echo
               echo "Initial release of \`@fqueis/openapi-contract\`."
             } > "$NOTES_FILE"
-          else
-            {
-              echo "## ${TAG}"
-              echo
-              echo "Changes since ${PREV_TAG}:"
-              echo
-              git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges
-              echo
-            } > "$NOTES_FILE"
-
-            if ! grep -q '^- ' "$NOTES_FILE"; then
-              {
-                echo "## ${TAG}"
-                echo
-                echo "Changes since ${PREV_TAG}:"
-                echo
-                echo "- No non-merge commits since ${PREV_TAG}."
-              } > "$NOTES_FILE"
-            fi
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file "$NOTES_FILE" \
+              --target "${{ github.sha }}"
           fi
-
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --notes-file "$NOTES_FILE" \
-            --target "${{ github.sha }}"
 
       - name: Publish to npm
         if: steps.version.outputs.already_published == 'false'
